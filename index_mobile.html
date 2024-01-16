@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instant Translator</title>
+    <!--link rel="stylesheet" href="style.css"-->
+    <style type="text/css">
+
+#content {
+    margin-bottom: 70px; /* Adjust this value as needed to ensure enough space above the button */
+}
+
+#content span.spoken {
+    color: blue;
+    display: block;
+}
+
+#content span.translated {
+    color: red;
+    display: block;
+}
+
+#recordButton {
+    position: fixed;
+    bottom: 10px;
+    width: 90%;
+    left: 5%;
+    padding: 10px;
+    font-size: 16px;
+}
+    </style>
+</head>
+<body>
+    <div id="content"></div>
+    <button id="recordButton">Record</button>
+    <!--script src="script_mobile.js"-->
+    <script>
+        
+let mediaRecorder;
+let audioChunks = [];
+let messageHistory = [];
+
+let isRecording = false;
+const recordButton = document.getElementById('recordButton');
+
+
+navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = event => {
+            audioChunks.push(event.data);
+        };
+        mediaRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+            audioChunks = [];
+            sendToWhisperAPI(audioBlob);
+        };
+    });
+
+recordButton.addEventListener('click', function() {
+    if (!isRecording) {
+        audioChunks = [];
+        mediaRecorder.start();
+        console.log("Recording started...");
+        recordButton.textContent = 'Stop Recording';
+        isRecording = true;
+    } else {
+        mediaRecorder.stop();
+        console.log("Recording stopped.");
+        recordButton.textContent = 'Start Recording';
+        isRecording = false;
+    }
+});
+
+function sendToWhisperAPI(audioBlob) {
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.mp3');
+    formData.append('model', 'whisper-1');
+
+    fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Bearer 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' // Replace with your API Key
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        const transcription = data.text;
+        displayText(transcription, "spoken");
+        updateMessageHistory("user", transcription); // Update history with user's message
+        translateWithGPT4(transcription);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+
+function translateWithGPT4(text) {
+    const data = {
+        model: "gpt-4-1106-preview",
+        messages: [
+            {
+                role: "system",
+                content: "You are an expert Korean and English language translator. When I write a text in Korean, you translate it to English. When I write a text in English, you translate it to Korean. Write the translation only, do not write any other introduction, comment or explanation. Write for a business context in Korea."
+            },
+            {
+              "role": "user",
+              "content": "Hello."
+            },
+            {
+              "role": "assistant",
+              "content": "안녕하세요."
+            },
+            {
+              "role": "user",
+              "content": "날씨가 어때요?"
+            },
+            {
+              "role": "user",
+              "content": "What's the weather like?"
+            },
+            ...messageHistory, // Include the message history
+            {
+                role: "user",
+                content: text
+            }
+        ]
+    };
+
+    fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer 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'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        const translation = data.choices[0].message.content;
+        displayText(translation, "translated");
+        updateMessageHistory("assistant", translation); // Update history with assistant's message
+        speakWithTTS(translation);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function speakWithTTS(text) {
+    const data = {
+        model: "tts-1",
+        input: text,
+        voice: "alloy"//"onyx" // Choose the voice you prefer nova
+    };
+
+    fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Bearer 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',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.blob())
+    .then(blob => {
+        const url = URL.createObjectURL(blob);
+        playAudio(url);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function playAudio(url) {
+    const audio = new Audio(url);
+    audio.play();
+}
+
+
+function displayText(text, className) {
+    const contentDiv = document.getElementById('content');
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = text;
+    contentDiv.appendChild(span);
+    scrollToBottom();
+}
+
+function scrollToBottom() {
+    window.scrollTo(0, document.body.scrollHeight);
+}
+
+function updateMessageHistory(role, content) {
+    messageHistory.push({ role: role, content: content });
+    if (messageHistory.length > 10) { // Keep only the last 10 messages (5 user, 5 assistant)
+        messageHistory.shift();
+    }
+}
+
+
+
+    </script>
+</body>
+</html>
